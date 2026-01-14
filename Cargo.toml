@@ -1,0 +1,21 @@
+[package]
+name = "raw-manager"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+axum = "0.7"
+bytes = "1.6"
+exif = "0.7"
+hex = "0.4"
+mime_guess = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros"] }
+tokio = { version = "1.38", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

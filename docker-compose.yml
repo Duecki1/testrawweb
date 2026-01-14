@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  raw-manager:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      # Update the left side to your photo library path.
+      - /mnt/hdd/photos:/library:ro
