@@ -68,7 +68,7 @@ pub async fn set_config(pool: &SqlitePool, key: &str, value: &str) -> Result<()>
 
 pub async fn get_file_meta(pool: &SqlitePool, path: &str) -> Result<Option<FileMeta>> {
     let row = sqlx::query(
-        "SELECT path, camera_rating, user_rating, tags, gps_lat, gps_lon, taken_at, file_size, last_modified\
+        "SELECT path, camera_rating, user_rating, tags, gps_lat, gps_lon, taken_at, file_size, last_modified \
         FROM files WHERE path = ?",
     )
     .bind(path)
