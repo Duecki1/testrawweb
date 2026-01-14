@@ -1110,6 +1110,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bytes",
+ "dotenvy",
  "hex",
  "kamadak-exif",
  "mime_guess",
