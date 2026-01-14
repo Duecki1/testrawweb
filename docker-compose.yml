@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   raw-manager:
     build: .
@@ -7,4 +6,5 @@ services:
     volumes:
       - ./data:/data
       # Set RAW_LIBRARY_PATH to your photo library path.
-      - ${RAW_LIBRARY_PATH:-./photos}:/library:ro
+      - ${RAW_LIBRARY_PATH:-/mnt/hdd/raws}:/library:ro
+    user: "1000:1000"  # Use host user ID to avoid permission issues
