@@ -72,7 +72,7 @@ async function init() {
     if (state.config.configured) {
       setStatus(`Library: ${state.config.library_root}`);
     } else {
-      setStatus("Setup required");
+      setStatus("Library not configured");
     }
   } catch (err) {
     setStatus("Backend unavailable");
@@ -87,13 +87,8 @@ async function init() {
 
 async function route() {
   const path = window.location.pathname;
-  if (!state.config?.configured && path !== "/setup") {
-    navigate("/setup");
-    return;
-  }
-
-  if (path === "/setup") {
-    renderSetup();
+  if (!state.config?.configured) {
+    renderNotConfigured();
     return;
   }
 
@@ -113,36 +108,16 @@ async function route() {
   await renderExplorer(browsePath);
 }
 
-function renderSetup() {
+function renderNotConfigured() {
   viewEl.innerHTML = `
     <section class="card setup-grid">
-      <h2>Initial setup</h2>
-      <div class="notice">Pick the folder where your raw files live. The app will only read inside this path.</div>
-      <form id="setup-form" class="setup-row">
-        <label>
-          Library root
-          <input class="input" id="library-root" placeholder="/path/to/photos" required />
-        </label>
-        <button class="primary-btn" type="submit">Save library</button>
-      </form>
+      <h2>Library not configured</h2>
+      <div class="notice">
+        Set RAW_MANAGER_LIBRARY_ROOT in your .env or docker-compose environment to the mounted library path,
+        then restart the service.
+      </div>
     </section>
   `;
-
-  const form = document.getElementById("setup-form");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const input = document.getElementById("library-root");
-    const value = input.value.trim();
-    if (!value) return;
-    try {
-      const config = await apiPost("/api/config", { library_root: value });
-      state.config = config;
-      setStatus(`Library: ${config.library_root}`);
-      navigate("/");
-    } catch (err) {
-      alert(err.message);
-    }
-  });
 }
 
 async function renderExplorer(path) {

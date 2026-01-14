@@ -1,6 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use std::collections::HashSet;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMeta {
@@ -16,52 +18,8 @@ pub struct FileMeta {
 }
 
 pub async fn init_db(pool: &SqlitePool) -> Result<()> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS config (\
-            key TEXT PRIMARY KEY,\
-            value TEXT NOT NULL\
-        );",
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS files (\
-            path TEXT PRIMARY KEY,\
-            camera_rating INTEGER,\
-            user_rating INTEGER,\
-            tags TEXT,\
-            gps_lat REAL,\
-            gps_lon REAL,\
-            taken_at TEXT,\
-            file_size INTEGER NOT NULL,\
-            last_modified INTEGER NOT NULL\
-        );",
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-pub async fn get_config(pool: &SqlitePool, key: &str) -> Result<Option<String>> {
-    let row = sqlx::query("SELECT value FROM config WHERE key = ?")
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
-
-    Ok(row.map(|r| r.get::<String, _>("value")))
-}
-
-pub async fn set_config(pool: &SqlitePool, key: &str, value: &str) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO config (key, value) VALUES (?, ?)\
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
-    )
-    .bind(key)
-    .bind(value)
-    .execute(pool)
-    .await?;
+    create_files_table(pool).await?;
+    ensure_files_schema(pool).await?;
 
     Ok(())
 }
@@ -178,4 +136,73 @@ fn row_to_meta(row: SqliteRow) -> FileMeta {
         file_size: row.get("file_size"),
         last_modified: row.get("last_modified"),
     }
+}
+
+async fn create_files_table(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS files (\
+            path TEXT PRIMARY KEY,\
+            camera_rating INTEGER,\
+            user_rating INTEGER,\
+            tags TEXT,\
+            gps_lat REAL,\
+            gps_lon REAL,\
+            taken_at TEXT,\
+            file_size INTEGER NOT NULL,\
+            last_modified INTEGER NOT NULL\
+        );",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_files_schema(pool: &SqlitePool) -> Result<()> {
+    let columns = list_columns(pool, "files").await?;
+    if columns.is_empty() {
+        return Ok(());
+    }
+
+    if !columns.contains("path") {
+        let legacy_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let legacy_name = format!("files_legacy_{}", legacy_suffix);
+        let rename_sql = format!("ALTER TABLE files RENAME TO {}", legacy_name);
+        sqlx::query(&rename_sql).execute(pool).await?;
+        create_files_table(pool).await?;
+        return Ok(());
+    }
+
+    let required = [
+        ("camera_rating", "INTEGER"),
+        ("user_rating", "INTEGER"),
+        ("tags", "TEXT"),
+        ("gps_lat", "REAL"),
+        ("gps_lon", "REAL"),
+        ("taken_at", "TEXT"),
+        ("file_size", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_modified", "INTEGER NOT NULL DEFAULT 0"),
+    ];
+
+    for (name, ty) in required {
+        if !columns.contains(name) {
+            let sql = format!("ALTER TABLE files ADD COLUMN {} {}", name, ty);
+            sqlx::query(&sql).execute(pool).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn list_columns(pool: &SqlitePool, table: &str) -> Result<HashSet<String>> {
+    let query = format!("PRAGMA table_info({});", table);
+    let rows = sqlx::query(&query).fetch_all(pool).await?;
+    let mut columns = HashSet::new();
+    for row in rows {
+        let name: String = row.get("name");
+        columns.insert(name);
+    }
+    Ok(columns)
 }

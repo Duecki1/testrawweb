@@ -41,11 +41,6 @@ struct ConfigResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct SetConfigRequest {
-    library_root: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct BrowseQuery {
     path: Option<String>,
 }
@@ -154,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    dotenvy::dotenv().ok();
+
     let data_dir = env::var("RAW_MANAGER_DATA_DIR").unwrap_or_else(|_| "data".to_string());
     let data_dir = PathBuf::from(data_dir);
     tokio::fs::create_dir_all(&data_dir).await?;
@@ -167,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = SqlitePool::connect_with(options).await?;
     db::init_db(&pool).await?;
 
-    let configured_root = db::get_config(&pool, "library_root").await?;
+    let configured_root = read_library_root_env();
     let (library_root, library_root_canon) = if let Some(root) = configured_root.clone() {
         let root_path = PathBuf::from(&root);
         match tokio::fs::canonicalize(&root_path).await {
@@ -189,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let api = Router::new()
-        .route("/config", get(get_config).post(set_config))
+        .route("/config", get(get_config))
         .route("/browse", get(browse))
         .route("/file/metadata", get(file_metadata))
         .route("/file/preview", get(file_preview))
@@ -223,49 +220,6 @@ async fn get_config(State(state): State<AppState>) -> ApiResult<Json<ConfigRespo
     Ok(Json(ConfigResponse {
         configured: value.is_some(),
         library_root: value,
-    }))
-}
-
-async fn set_config(
-    State(state): State<AppState>,
-    Json(payload): Json<SetConfigRequest>,
-) -> ApiResult<Json<ConfigResponse>> {
-    if payload.library_root.trim().is_empty() {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "Library root cannot be empty",
-        ));
-    }
-
-    let root_path = PathBuf::from(payload.library_root.trim());
-    let metadata = tokio::fs::metadata(&root_path)
-        .await
-        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Path does not exist"))?;
-    if !metadata.is_dir() {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "Path is not a directory",
-        ));
-    }
-
-    let canon = tokio::fs::canonicalize(&root_path)
-        .await
-        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Path not accessible"))?;
-
-    db::set_config(&state.pool, "library_root", root_path.to_str().unwrap_or(""))
-        .await
-        .map_err(internal_error)?;
-
-    {
-        let mut root = state.library_root.write().await;
-        *root = Some(root_path.clone());
-        let mut root_canon = state.library_root_canon.write().await;
-        *root_canon = Some(canon);
-    }
-
-    Ok(Json(ConfigResponse {
-        configured: true,
-        library_root: root_path.to_str().map(|s| s.to_string()),
     }))
 }
 
@@ -749,4 +703,18 @@ fn internal_error(err: impl std::fmt::Display) -> ApiError {
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("Internal error: {err}"),
     )
+}
+
+fn read_library_root_env() -> Option<String> {
+    let value = env::var("RAW_MANAGER_LIBRARY_ROOT")
+        .ok()
+        .or_else(|| env::var("RAW_LIBRARY_ROOT").ok());
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
