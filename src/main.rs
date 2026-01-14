@@ -206,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let addr = env::var("RAW_MANAGER_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let addr = env::var("RAW_MANAGER_ADDR").unwrap_or_else(|_| "0.0.0.0:1234".to_string());
     info!("Raw Manager listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=build /app/target/release/raw-manager /app/raw-manager
 COPY --from=build /app/static /app/static
 ENV RAW_MANAGER_DATA_DIR=/data
-EXPOSE 8080
+EXPOSE 1234
 VOLUME ["/data"]
 USER app
 CMD ["/app/raw-manager"]

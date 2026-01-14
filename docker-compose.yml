@@ -3,7 +3,7 @@ services:
   raw-manager:
     build: .
     ports:
-      - "8080:8080"
+      - "1234:1234"
     volumes:
       - ./data:/data
       # Set RAW_LIBRARY_PATH to your photo library path.
