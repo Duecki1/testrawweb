@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
@@ -28,8 +29,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
-    library_root: RwLock<Option<PathBuf>>,
-    library_root_canon: RwLock<Option<PathBuf>>,
+    library_root: Arc<RwLock<Option<PathBuf>>>,
+    library_root_canon: Arc<RwLock<Option<PathBuf>>>,
     preview_dir: PathBuf,
 }
 
@@ -182,8 +183,8 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         pool,
-        library_root: RwLock::new(library_root),
-        library_root_canon: RwLock::new(library_root_canon),
+        library_root: Arc::new(RwLock::new(library_root)),
+        library_root_canon: Arc::new(RwLock::new(library_root_canon)),
         preview_dir,
     };
 

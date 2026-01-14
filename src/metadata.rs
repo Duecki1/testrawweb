@@ -176,10 +176,10 @@ fn gps_value(value: &Value) -> Option<f64> {
 }
 
 fn rational_to_f64(value: &exif::Rational) -> f64 {
-    if value.den == 0 {
+    if value.denom == 0 {
         return 0.0;
     }
-    value.num as f64 / value.den as f64
+    value.num as f64 / value.denom as f64
 }
 
 fn extract_xmp_rating_from_path(path: &Path) -> Result<Option<i32>> {
@@ -252,7 +252,7 @@ fn find_largest_jpeg(data: &[u8]) -> Option<(usize, usize)> {
                 if data[i] == 0xFF && data[i + 1] == 0xD9 {
                     let end = i + 2;
                     let size = end - start;
-                    if best.map(|(s, e)| (e - s)).unwrap_or(0) < size {
+                    if best.map(|(s, e)| e - s).unwrap_or(0) < size {
                         best = Some((start, end));
                     }
                     i = end;
