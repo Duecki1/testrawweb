@@ -12,7 +12,7 @@ Raw Manager is a local-first web app for reviewing RAW files, rating, tagging, a
 
 ## Run with Docker
 
-1. Adjust the library mount path in `docker-compose.yml`.
+1. Set `RAW_LIBRARY_PATH` (host path) or place files under `./photos` next to the compose file.
 2. Start the stack:
 
 ```sh

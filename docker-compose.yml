@@ -6,5 +6,5 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
-      # Update the left side to your photo library path.
-      - /mnt/hdd/photos:/library:ro
+      # Set RAW_LIBRARY_PATH to your photo library path.
+      - ${RAW_LIBRARY_PATH:-./photos}:/library:ro

@@ -121,7 +121,7 @@ function renderSetup() {
       <form id="setup-form" class="setup-row">
         <label>
           Library root
-          <input class="input" id="library-root" placeholder="/mnt/hdd/photos" required />
+          <input class="input" id="library-root" placeholder="/path/to/photos" required />
         </label>
         <button class="primary-btn" type="submit">Save library</button>
       </form>

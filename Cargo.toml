@@ -7,7 +7,7 @@ edition = "2021"
 anyhow = "1.0"
 axum = "0.7"
 bytes = "1.6"
-exif = "0.7"
+exif = { package = "kamadak-exif", version = "0.5.5" }
 hex = "0.4"
 mime_guess = "2.0"
 serde = { version = "1.0", features = ["derive"] }
