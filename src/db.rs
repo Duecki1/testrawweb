@@ -39,17 +39,29 @@ pub async fn get_file_meta(pool: &SqlitePool, path: &str) -> Result<Option<FileM
 pub async fn upsert_file_meta(pool: &SqlitePool, meta: &FileMeta) -> Result<()> {
     let tags_json = serde_json::to_string(&meta.tags)?;
     sqlx::query(
-        "INSERT INTO files (path, camera_rating, user_rating, tags, gps_lat, gps_lon, taken_at, file_size, last_modified)\
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\
-        ON CONFLICT(path) DO UPDATE SET\
-            camera_rating = excluded.camera_rating,\
-            user_rating = excluded.user_rating,\
-            tags = excluded.tags,\
-            gps_lat = excluded.gps_lat,\
-            gps_lon = excluded.gps_lon,\
-            taken_at = excluded.taken_at,\
-            file_size = excluded.file_size,\
-            last_modified = excluded.last_modified;",
+        r#"
+        INSERT INTO files (
+            path,
+            camera_rating,
+            user_rating,
+            tags,
+            gps_lat,
+            gps_lon,
+            taken_at,
+            file_size,
+            last_modified
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            camera_rating = excluded.camera_rating,
+            user_rating = excluded.user_rating,
+            tags = excluded.tags,
+            gps_lat = excluded.gps_lat,
+            gps_lon = excluded.gps_lon,
+            taken_at = excluded.taken_at,
+            file_size = excluded.file_size,
+            last_modified = excluded.last_modified;
+        "#,
     )
     .bind(&meta.path)
     .bind(meta.camera_rating)
@@ -74,12 +86,14 @@ pub async fn upsert_user_rating(
     last_modified: i64,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO files (path, user_rating, tags, file_size, last_modified)\
-        VALUES (?, ?, ?, ?, ?)\
-        ON CONFLICT(path) DO UPDATE SET\
-            user_rating = excluded.user_rating,\
-            file_size = excluded.file_size,\
-            last_modified = excluded.last_modified;",
+        r#"
+        INSERT INTO files (path, user_rating, tags, file_size, last_modified)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            user_rating = excluded.user_rating,
+            file_size = excluded.file_size,
+            last_modified = excluded.last_modified;
+        "#,
     )
     .bind(path)
     .bind(rating)
@@ -101,12 +115,14 @@ pub async fn upsert_tags(
 ) -> Result<()> {
     let tags_json = serde_json::to_string(tags)?;
     sqlx::query(
-        "INSERT INTO files (path, user_rating, tags, file_size, last_modified)\
-        VALUES (?, ?, ?, ?, ?)\
-        ON CONFLICT(path) DO UPDATE SET\
-            tags = excluded.tags,\
-            file_size = excluded.file_size,\
-            last_modified = excluded.last_modified;",
+        r#"
+        INSERT INTO files (path, user_rating, tags, file_size, last_modified)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            tags = excluded.tags,
+            file_size = excluded.file_size,
+            last_modified = excluded.last_modified;
+        "#,
     )
     .bind(path)
     .bind(None::<i32>)
