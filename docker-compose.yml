@@ -7,5 +7,5 @@ services:
       RAW_MANAGER_LIBRARY_ROOT: ${RAW_MANAGER_LIBRARY_ROOT}
     volumes:
       - ./data:/data
-      - ${RAW_LIBRARY_PATH}:${RAW_MANAGER_LIBRARY_ROOT}:ro
+      - ${RAW_LIBRARY_PATH}:${RAW_MANAGER_LIBRARY_ROOT}
     user: "1000:1000"  # Use host user ID to avoid permission issues

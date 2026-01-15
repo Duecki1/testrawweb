@@ -135,6 +135,14 @@ body {
   transform: translateY(-1px);
 }
 
+.primary-btn:disabled,
+.secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .input {
   padding: 12px 14px;
   border-radius: 12px;
@@ -199,18 +207,29 @@ body {
 .folder-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid transparent;
   background: rgba(26, 33, 45, 0.04);
   cursor: pointer;
   transition: border 0.15s ease, transform 0.15s ease;
+  position: relative;
+}
+
+.folder-item .badge {
+  margin-left: auto;
 }
 
 .folder-item:hover {
   border-color: var(--stroke);
   transform: translateY(-1px);
+}
+
+.folder-item.selected {
+  border-color: rgba(240, 106, 68, 0.45);
+  background: rgba(240, 106, 68, 0.08);
 }
 
 .file-grid {
@@ -230,11 +249,17 @@ body {
   box-shadow: 0 10px 24px rgba(26, 33, 45, 0.08);
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
 }
 
 .file-card:hover {
   transform: translateY(-3px);
   box-shadow: 0 14px 30px rgba(26, 33, 45, 0.14);
+}
+
+.file-card.selected {
+  border-color: rgba(240, 106, 68, 0.45);
+  box-shadow: 0 12px 28px rgba(240, 106, 68, 0.2);
 }
 
 .file-thumb {
@@ -243,6 +268,7 @@ body {
   border-radius: 14px;
   background: linear-gradient(135deg, rgba(26, 33, 45, 0.08), rgba(26, 33, 45, 0.02));
   object-fit: cover;
+  image-orientation: from-image;
 }
 
 .file-meta {
@@ -294,6 +320,7 @@ body {
   object-fit: contain;
   border-radius: 18px;
   background: linear-gradient(135deg, rgba(26, 33, 45, 0.08), rgba(26, 33, 45, 0.02));
+  image-orientation: from-image;
 }
 
 .meta-list {
@@ -387,6 +414,106 @@ body {
   background: rgba(240, 106, 68, 0.12);
   color: var(--accent-strong);
   font-size: 0.9rem;
+}
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.action-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.selection-pill {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(26, 33, 45, 0.08);
+  font-size: 0.85rem;
+}
+
+.action-panel {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(26, 33, 45, 0.04);
+  margin-bottom: 16px;
+  border: 1px dashed rgba(26, 33, 45, 0.2);
+}
+
+.action-panel.hidden {
+  display: none;
+}
+
+.panel-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.panel-field {
+  flex: 1;
+  min-width: 220px;
+  display: grid;
+  gap: 8px;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.select-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(26, 33, 45, 0.25);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.folder-item .select-toggle {
+  position: static;
+  width: 20px;
+  height: 20px;
+}
+
+.select-toggle::after {
+  content: "";
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(-45deg);
+  opacity: 0;
+}
+
+.select-toggle.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.select-toggle.selected::after {
+  opacity: 1;
+}
+
+.nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 @media (max-width: 980px) {

@@ -8,18 +8,27 @@ Raw Manager is a local-first web app for reviewing RAW files, rating, tagging, a
 - Read camera ratings (EXIF/XMP) and GPS metadata.
 - Add your own ratings and tags (stored in SQLite).
 - Download original files.
+- Create folders, move, and delete files.
 - Configure the library root through environment variables.
 
 ## Run with Docker
 
 1. Set `RAW_LIBRARY_PATH` (host path) and `RAW_MANAGER_LIBRARY_ROOT` (container path) in `.env` or your shell.
-2. Start the stack:
+   Example `.env`:
+
+```sh
+RAW_LIBRARY_PATH=/path/to/photos
+RAW_MANAGER_LIBRARY_ROOT=/library
+```
+
+2. Ensure the library volume is mounted read-write if you want to move/delete files.
+3. Start the stack:
 
 ```sh
 docker compose up --build
 ```
 
-3. Open `http://localhost:1234`.
+4. Open `http://localhost:1234`.
 
 ## Run locally (without Docker)
 

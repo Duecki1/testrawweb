@@ -11,6 +11,7 @@ pub struct ExtractedMeta {
     pub gps_lat: Option<f64>,
     pub gps_lon: Option<f64>,
     pub taken_at: Option<String>,
+    pub orientation: Option<i32>,
 }
 
 pub fn read_metadata(path: &Path) -> Result<ExtractedMeta> {
@@ -23,6 +24,7 @@ pub fn read_metadata(path: &Path) -> Result<ExtractedMeta> {
     let mut gps_lat = None;
     let mut gps_lon = None;
     let mut taken_at = None;
+    let mut orientation = None;
 
     if let Some(exif) = exif {
         camera_rating = extract_rating(&exif);
@@ -33,6 +35,7 @@ pub fn read_metadata(path: &Path) -> Result<ExtractedMeta> {
             gps_lat = Some(lat);
             gps_lon = Some(lon);
         }
+        orientation = extract_orientation(&exif);
     }
 
     if camera_rating.is_none() {
@@ -48,6 +51,7 @@ pub fn read_metadata(path: &Path) -> Result<ExtractedMeta> {
         gps_lat,
         gps_lon,
         taken_at,
+        orientation,
     })
 }
 
@@ -132,6 +136,13 @@ fn extract_datetime(exif: &exif::Exif) -> Option<String> {
         .or_else(|| exif.get_field(Tag::DateTime, In::PRIMARY));
 
     field.map(|f| f.display_value().with_unit(exif).to_string())
+}
+
+fn extract_orientation(exif: &exif::Exif) -> Option<i32> {
+    exif
+        .get_field(Tag::Orientation, In::PRIMARY)
+        .and_then(|field| parse_numeric(&field.value))
+        .filter(|value| (1..=8).contains(value))
 }
 
 fn extract_gps(exif: &exif::Exif) -> Option<(f64, f64)> {

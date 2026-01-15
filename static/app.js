@@ -1,6 +1,10 @@
 const state = {
   config: null,
   currentPath: "",
+  currentEntries: [],
+  selection: new Map(),
+  fileNav: null,
+  navHandler: null,
 };
 
 const viewEl = document.getElementById("view");
@@ -37,6 +41,30 @@ function previewUrl(path) {
 
 function downloadUrl(path) {
   return `/api/file/download?path=${encodeURIComponent(path)}`;
+}
+
+function applyOrientation(img, orientation) {
+  const mapping = {
+    2: "scaleX(-1)",
+    3: "rotate(180deg)",
+    4: "scaleY(-1)",
+    5: "rotate(90deg) scaleX(-1)",
+    6: "rotate(90deg)",
+    7: "rotate(270deg) scaleX(-1)",
+    8: "rotate(270deg)",
+  };
+  const transform = mapping[orientation] || "";
+  img.style.transform = transform;
+  img.style.transformOrigin = "center center";
+  img.style.imageOrientation = transform ? "none" : "from-image";
+}
+
+function clearFileNav() {
+  if (state.navHandler) {
+    window.removeEventListener("keydown", state.navHandler);
+  }
+  state.fileNav = null;
+  state.navHandler = null;
 }
 
 async function apiGet(url) {
@@ -109,6 +137,7 @@ async function route() {
 }
 
 function renderNotConfigured() {
+  clearFileNav();
   viewEl.innerHTML = `
     <section class="card setup-grid">
       <h2>Library not configured</h2>
@@ -121,10 +150,13 @@ function renderNotConfigured() {
 }
 
 async function renderExplorer(path) {
+  clearFileNav();
   viewEl.innerHTML = `<div class="card"><div class="loading">Loading library...</div></div>`;
   try {
     const data = await apiGet(`/api/browse?path=${encodeURIComponent(path)}`);
     state.currentPath = data.path;
+    state.currentEntries = data.entries;
+    state.selection = new Map();
     if (state.config?.library_root) {
       setStatus(`Library: ${state.config.library_root} - /${data.path || ""}`);
     }
@@ -145,14 +177,21 @@ async function renderExplorer(path) {
             <div class="folder-list">
               ${dirs
                 .map(
-                  (dir) => `
-                <div class="folder-item" data-action="open-folder" data-path="${encodeURIComponent(
-                  dir.path
-                )}">
+                  (dir) => {
+                    const isSelected = state.selection.has(dir.path);
+                    const selectedClass = isSelected ? " selected" : "";
+                    return `
+                <div class="folder-item${selectedClass}" data-action="open-folder" data-path="${encodeURIComponent(
+                      dir.path
+                    )}">
+                  <button class="select-toggle${selectedClass}" data-action="toggle-select" data-kind="dir" data-path="${encodeURIComponent(
+                      dir.path
+                    )}" aria-label="Select folder"></button>
                   <span>${escapeHtml(dir.name)}</span>
                   <span class="badge">Open</span>
                 </div>
-              `
+              `;
+                  }
                 )
                 .join("")}
               ${dirs.length === 0 ? "<div class=\"loading\">No subfolders.</div>" : ""}
@@ -160,6 +199,17 @@ async function renderExplorer(path) {
           </div>
         </div>
         <div class="card">
+          <div class="action-bar">
+            <div class="selection-pill" id="selection-count">0 selected</div>
+            <div class="action-group">
+              <button class="secondary-btn" id="select-all-btn">Select all</button>
+              <button class="secondary-btn" id="new-folder-btn">New folder</button>
+              <button class="secondary-btn" id="move-btn" disabled>Move</button>
+              <button class="secondary-btn" id="delete-btn" disabled>Delete</button>
+              <button class="secondary-btn" id="clear-selection" disabled>Clear</button>
+            </div>
+          </div>
+          <div class="action-panel hidden" id="action-panel"></div>
           <div class="meta-label">Files</div>
           <div class="file-grid">
             ${files
@@ -205,14 +255,19 @@ function renderFileCard(file) {
   const scanBadge = file.needs_scan
     ? `<span class="badge">scan</span>`
     : "";
+  const isSelected = state.selection.has(file.path);
+  const selectedClass = isSelected ? " selected" : "";
 
   return `
-    <div class="file-card" data-action="open-file" data-path="${encodeURIComponent(
+    <div class="file-card${selectedClass}" data-action="open-file" data-path="${encodeURIComponent(
       file.path
     )}">
+      <button class="select-toggle${selectedClass}" data-action="toggle-select" data-kind="file" data-path="${encodeURIComponent(
+        file.path
+      )}" aria-label="Select file"></button>
       <img class="file-thumb" data-preview="${encodeURIComponent(
         file.path
-      )}" alt="Preview" />
+      )}" data-orientation="${file.orientation ?? ""}" alt="Preview" />
       <div class="file-meta">
         <div class="file-name">${escapeHtml(file.name)}</div>
         <div class="badge-row">
@@ -223,6 +278,59 @@ function renderFileCard(file) {
       </div>
     </div>
   `;
+}
+
+function updateSelectionUI() {
+  const selectionCount = document.getElementById("selection-count");
+  const moveBtn = document.getElementById("move-btn");
+  const deleteBtn = document.getElementById("delete-btn");
+  const clearBtn = document.getElementById("clear-selection");
+  const count = state.selection.size;
+  const dirCount = Array.from(state.selection.values()).filter(
+    (kind) => kind === "dir"
+  ).length;
+
+  if (selectionCount) {
+    selectionCount.textContent =
+      dirCount > 0 ? `${count} selected (${dirCount} folder)` : `${count} selected`;
+  }
+
+  if (moveBtn) moveBtn.disabled = count === 0;
+  if (deleteBtn) deleteBtn.disabled = count === 0;
+  if (clearBtn) clearBtn.disabled = count === 0;
+}
+
+function toggleSelection(path, kind, element) {
+  if (state.selection.has(path)) {
+    state.selection.delete(path);
+  } else {
+    state.selection.set(path, kind);
+  }
+
+  const isSelected = state.selection.has(path);
+  if (element) {
+    element.classList.toggle("selected", isSelected);
+    const parent = element.closest(".file-card, .folder-item");
+    if (parent) {
+      parent.classList.toggle("selected", isSelected);
+    }
+  }
+
+  updateSelectionUI();
+}
+
+function showActionPanel(content) {
+  const panel = document.getElementById("action-panel");
+  if (!panel) return;
+  panel.innerHTML = content;
+  panel.classList.remove("hidden");
+}
+
+function hideActionPanel() {
+  const panel = document.getElementById("action-panel");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  panel.innerHTML = "";
 }
 
 function bindExplorerHandlers() {
@@ -245,15 +353,168 @@ function bindExplorerHandlers() {
     });
   });
 
+  document.querySelectorAll("[data-action='toggle-select']").forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const path = decodeURIComponent(item.dataset.path || "");
+      const kind = item.dataset.kind || "file";
+      toggleSelection(path, kind, item);
+    });
+  });
+
   document.querySelectorAll("img[data-preview]").forEach((img) => {
     const path = decodeURIComponent(img.dataset.preview || "");
     img.src = previewUrl(path);
+    const orientation = Number(img.dataset.orientation || 0);
+    if (orientation) {
+      applyOrientation(img, orientation);
+    }
     img.addEventListener("error", () => {
       img.removeAttribute("data-preview");
       img.src = "";
       img.alt = "No preview";
     });
   });
+
+  const selectAllBtn = document.getElementById("select-all-btn");
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener("click", () => {
+      state.selection = new Map();
+      state.currentEntries.forEach((entry) => {
+        state.selection.set(entry.path, entry.kind);
+      });
+      document
+        .querySelectorAll("[data-action='toggle-select']")
+        .forEach((toggle) => {
+          const path = decodeURIComponent(toggle.dataset.path || "");
+          if (state.selection.has(path)) {
+            toggle.classList.add("selected");
+            const parent = toggle.closest(".file-card, .folder-item");
+            if (parent) parent.classList.add("selected");
+          }
+        });
+      updateSelectionUI();
+    });
+  }
+
+  const clearSelectionBtn = document.getElementById("clear-selection");
+  if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener("click", () => {
+      state.selection = new Map();
+      document
+        .querySelectorAll("[data-action='toggle-select']")
+        .forEach((toggle) => {
+          toggle.classList.remove("selected");
+          const parent = toggle.closest(".file-card, .folder-item");
+          if (parent) parent.classList.remove("selected");
+        });
+      updateSelectionUI();
+    });
+  }
+
+  const newFolderBtn = document.getElementById("new-folder-btn");
+  if (newFolderBtn) {
+    newFolderBtn.addEventListener("click", () => {
+      showActionPanel(`
+        <div class="panel-row">
+          <div class="panel-field">
+            <div class="meta-label">New folder</div>
+            <input class="input" id="new-folder-name" placeholder="e.g. selects" />
+          </div>
+          <div class="panel-actions">
+            <button class="secondary-btn" id="panel-cancel">Cancel</button>
+            <button class="primary-btn" id="panel-confirm">Create</button>
+          </div>
+        </div>
+      `);
+
+      const cancelBtn = document.getElementById("panel-cancel");
+      const confirmBtn = document.getElementById("panel-confirm");
+      const input = document.getElementById("new-folder-name");
+
+      cancelBtn?.addEventListener("click", hideActionPanel);
+      confirmBtn?.addEventListener("click", async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        const path = state.currentPath ? `${state.currentPath}/${name}` : name;
+        try {
+          await apiPost("/api/fs/mkdir", { path });
+          hideActionPanel();
+          await renderExplorer(state.currentPath);
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    });
+  }
+
+  const moveBtn = document.getElementById("move-btn");
+  if (moveBtn) {
+    moveBtn.addEventListener("click", () => {
+      if (state.selection.size === 0) return;
+      showActionPanel(`
+        <div class="panel-row">
+          <div class="panel-field">
+            <div class="meta-label">Move selected to</div>
+            <input class="input" id="move-dest" placeholder="Folder path" />
+          </div>
+          <div class="panel-actions">
+            <button class="secondary-btn" id="panel-cancel">Cancel</button>
+            <button class="primary-btn" id="panel-confirm">Move</button>
+          </div>
+        </div>
+      `);
+
+      const cancelBtn = document.getElementById("panel-cancel");
+      const confirmBtn = document.getElementById("panel-confirm");
+      const input = document.getElementById("move-dest");
+      if (input) {
+        input.value = state.currentPath || "";
+      }
+
+      cancelBtn?.addEventListener("click", hideActionPanel);
+      confirmBtn?.addEventListener("click", async () => {
+        const destination = input.value.trim();
+        const paths = Array.from(state.selection.keys());
+        try {
+          await apiPost("/api/fs/move", { paths, destination });
+          hideActionPanel();
+          state.selection = new Map();
+          await renderExplorer(state.currentPath);
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    });
+  }
+
+  const deleteBtn = document.getElementById("delete-btn");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", async () => {
+      const paths = Array.from(state.selection.keys());
+      if (paths.length === 0) return;
+      const dirCount = Array.from(state.selection.values()).filter(
+        (kind) => kind === "dir"
+      ).length;
+      const message =
+        dirCount > 0
+          ? "Delete selected items? Folders will be removed recursively."
+          : "Delete selected files?";
+      if (!confirm(message)) return;
+      try {
+        await apiPost("/api/fs/delete", {
+          paths,
+          recursive: dirCount > 0,
+        });
+        state.selection = new Map();
+        await renderExplorer(state.currentPath);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  }
+
+  updateSelectionUI();
 }
 
 async function renderFileDetail(path) {
@@ -262,11 +523,25 @@ async function renderFileDetail(path) {
     const meta = await apiGet(`/api/file/metadata?path=${encodeURIComponent(path)}`);
     const previewSrc = previewUrl(path);
     const mapEmbed = meta.gps_lat != null && meta.gps_lon != null;
+    const folderPath = path.includes("/") ? path.split("/").slice(0, -1).join("/") : "";
+    state.currentPath = folderPath;
+    const siblingData = await apiGet(`/api/browse?path=${encodeURIComponent(folderPath)}`);
+    const fileEntries = siblingData.entries.filter((entry) => entry.kind === "file");
+    const index = fileEntries.findIndex((entry) => entry.path === path);
+    const prevFile = index > 0 ? fileEntries[index - 1] : null;
+    const nextFile = index >= 0 && index < fileEntries.length - 1 ? fileEntries[index + 1] : null;
+    const positionLabel =
+      index >= 0 ? `${index + 1} / ${fileEntries.length}` : `0 / ${fileEntries.length}`;
 
     viewEl.innerHTML = `
       <section class="details-grid">
         <div class="card preview-card">
           <button class="secondary-btn" id="back-btn">Back to folder</button>
+          <div class="nav-row">
+            <button class="secondary-btn" id="prev-btn" ${prevFile ? "" : "disabled"}>Prev</button>
+            <div class="meta-label">${positionLabel}</div>
+            <button class="secondary-btn" id="next-btn" ${nextFile ? "" : "disabled"}>Next</button>
+          </div>
           <img class="preview-img" src="${previewSrc}" alt="Preview" />
           <div class="tag-list" id="tag-list"></div>
         </div>
@@ -309,7 +584,7 @@ async function renderFileDetail(path) {
       </section>
     `;
 
-    bindDetailHandlers(path, meta);
+    bindDetailHandlers(path, meta, prevFile, nextFile);
   } catch (err) {
     viewEl.innerHTML = `<div class="card"><div class="notice">${escapeHtml(
       err.message
@@ -332,7 +607,7 @@ function renderMap(lat, lon) {
   `;
 }
 
-function bindDetailHandlers(path, meta) {
+function bindDetailHandlers(path, meta, prevFile, nextFile) {
   const backBtn = document.getElementById("back-btn");
   backBtn.addEventListener("click", () => {
     const backPath = state.currentPath;
@@ -341,11 +616,43 @@ function bindDetailHandlers(path, meta) {
 
   const previewImg = document.querySelector(".preview-img");
   if (previewImg) {
+    if (meta.orientation) {
+      applyOrientation(previewImg, meta.orientation);
+    }
     previewImg.addEventListener("error", () => {
       previewImg.removeAttribute("src");
       previewImg.alt = "No preview available";
     });
   }
+
+  const prevBtn = document.getElementById("prev-btn");
+  const nextBtn = document.getElementById("next-btn");
+  if (prevBtn && prevFile) {
+    prevBtn.addEventListener("click", () => {
+      navigate(`/file?path=${encodeURIComponent(prevFile.path)}`);
+    });
+  }
+  if (nextBtn && nextFile) {
+    nextBtn.addEventListener("click", () => {
+      navigate(`/file?path=${encodeURIComponent(nextFile.path)}`);
+    });
+  }
+
+  clearFileNav();
+  state.fileNav = { prev: prevFile, next: nextFile };
+  state.navHandler = (event) => {
+    const active = document.activeElement;
+    if (active && ["INPUT", "TEXTAREA"].includes(active.tagName)) {
+      return;
+    }
+    if (event.key === "ArrowLeft" && state.fileNav?.prev) {
+      navigate(`/file?path=${encodeURIComponent(state.fileNav.prev.path)}`);
+    }
+    if (event.key === "ArrowRight" && state.fileNav?.next) {
+      navigate(`/file?path=${encodeURIComponent(state.fileNav.next.path)}`);
+    }
+  };
+  window.addEventListener("keydown", state.navHandler);
 
   const ratingEl = document.getElementById("user-rating");
   renderStarControls(ratingEl, meta.user_rating, async (value) => {

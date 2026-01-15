@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -64,6 +65,7 @@ struct BrowseEntry {
     gps_lat: Option<f64>,
     gps_lon: Option<f64>,
     taken_at: Option<String>,
+    orientation: Option<i32>,
     needs_scan: bool,
 }
 
@@ -82,6 +84,7 @@ struct FileMetaResponse {
     gps_lat: Option<f64>,
     gps_lon: Option<f64>,
     taken_at: Option<String>,
+    orientation: Option<i32>,
     file_size: i64,
     last_modified: i64,
 }
@@ -106,6 +109,28 @@ struct TagsRequest {
 #[derive(Debug, Serialize)]
 struct TagsResponse {
     tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MkdirRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteRequest {
+    paths: Vec<String>,
+    recursive: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MoveRequest {
+    paths: Vec<String>,
+    destination: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FsResponse {
+    success: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -193,6 +218,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/file/download", get(file_download))
         .route("/file/rating", post(set_rating))
         .route("/file/tags", post(set_tags))
+        .route("/fs/mkdir", post(fs_mkdir))
+        .route("/fs/delete", post(fs_delete))
+        .route("/fs/move", post(fs_move))
         .route("/health", get(health));
 
     let static_service = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
@@ -279,6 +307,7 @@ async fn browse(
                 gps_lat: None,
                 gps_lon: None,
                 taken_at: None,
+                orientation: None,
                 needs_scan: false,
             });
             continue;
@@ -311,10 +340,12 @@ async fn browse(
             .await
             .map_err(internal_error)?;
 
-        let (camera_rating, user_rating, tags, gps_lat, gps_lon, taken_at, needs_scan) =
+        let (camera_rating, user_rating, tags, gps_lat, gps_lon, taken_at, orientation, needs_scan) =
             match db_meta {
                 Some(db_meta) => {
-                    let is_fresh = db_meta.file_size == size && db_meta.last_modified == modified;
+                    let is_fresh = db_meta.file_size == size
+                        && db_meta.last_modified == modified
+                        && db_meta.orientation.is_some();
                     (
                         db_meta.camera_rating,
                         db_meta.user_rating,
@@ -322,10 +353,11 @@ async fn browse(
                         db_meta.gps_lat,
                         db_meta.gps_lon,
                         db_meta.taken_at,
+                        db_meta.orientation,
                         !is_fresh,
                     )
                 }
-                None => (None, None, Vec::new(), None, None, None, true),
+                None => (None, None, Vec::new(), None, None, None, None, true),
             };
 
         entries.push(BrowseEntry {
@@ -340,6 +372,7 @@ async fn browse(
             gps_lat,
             gps_lon,
             taken_at,
+            orientation,
             needs_scan,
         });
     }
@@ -385,12 +418,17 @@ async fn file_metadata(
         .await
         .map_err(internal_error)?;
 
-    let (camera_rating, gps_lat, gps_lon, taken_at, user_rating, tags) = match db_meta {
-        Some(existing) if existing.file_size == size && existing.last_modified == modified => (
+    let (camera_rating, gps_lat, gps_lon, taken_at, orientation, user_rating, tags) = match db_meta {
+        Some(existing)
+            if existing.file_size == size
+                && existing.last_modified == modified
+                && existing.orientation.is_some() =>
+        (
             existing.camera_rating,
             existing.gps_lat,
             existing.gps_lon,
             existing.taken_at,
+            existing.orientation,
             existing.user_rating,
             existing.tags,
         ),
@@ -408,6 +446,7 @@ async fn file_metadata(
                 gps_lat: extracted.gps_lat,
                 gps_lon: extracted.gps_lon,
                 taken_at: extracted.taken_at,
+                orientation: extracted.orientation,
                 file_size: size,
                 last_modified: modified,
             };
@@ -419,6 +458,7 @@ async fn file_metadata(
                 new_meta.gps_lat,
                 new_meta.gps_lon,
                 new_meta.taken_at,
+                new_meta.orientation,
                 new_meta.user_rating,
                 new_meta.tags,
             )
@@ -437,6 +477,7 @@ async fn file_metadata(
                 gps_lat: extracted.gps_lat,
                 gps_lon: extracted.gps_lon,
                 taken_at: extracted.taken_at,
+                orientation: extracted.orientation,
                 file_size: size,
                 last_modified: modified,
             };
@@ -448,6 +489,7 @@ async fn file_metadata(
                 new_meta.gps_lat,
                 new_meta.gps_lon,
                 new_meta.taken_at,
+                new_meta.orientation,
                 new_meta.user_rating,
                 new_meta.tags,
             )
@@ -469,6 +511,7 @@ async fn file_metadata(
         gps_lat,
         gps_lon,
         taken_at,
+        orientation,
         file_size: size,
         last_modified: modified,
     }))
@@ -644,6 +687,203 @@ async fn set_tags(
     Ok(Json(TagsResponse { tags }))
 }
 
+async fn fs_mkdir(
+    State(state): State<AppState>,
+    Json(payload): Json<MkdirRequest>,
+) -> ApiResult<Json<FsResponse>> {
+    let root_canon = get_root_canon(&state).await?;
+    let rel = sanitize_relative(&payload.path)?;
+    if rel.as_os_str().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Folder name is required",
+        ));
+    }
+
+    let full_path = root_canon.join(&rel);
+    let parent = full_path.parent().ok_or_else(|| {
+        ApiError::new(StatusCode::BAD_REQUEST, "Invalid folder path")
+    })?;
+    let parent_canon = tokio::fs::canonicalize(parent)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Parent folder not found"))?;
+
+    if !parent_canon.starts_with(&root_canon) {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid path"));
+    }
+
+    tokio::fs::create_dir_all(&full_path)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Unable to create folder"))?;
+
+    Ok(Json(FsResponse { success: true }))
+}
+
+async fn fs_delete(
+    State(state): State<AppState>,
+    Json(payload): Json<DeleteRequest>,
+) -> ApiResult<Json<FsResponse>> {
+    if payload.paths.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "No paths provided",
+        ));
+    }
+    let root_canon = get_root_canon(&state).await?;
+
+    for path in payload.paths {
+        let rel = sanitize_relative(&path)?;
+        if rel.as_os_str().is_empty() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "Invalid path",
+            ));
+        }
+        let rel_str = rel_to_string(&rel);
+        let full_path = root_canon.join(&rel);
+        let full_canon = tokio::fs::canonicalize(&full_path)
+            .await
+            .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Path not found"))?;
+
+        if !full_canon.starts_with(&root_canon) {
+            return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid path"));
+        }
+
+        let meta = tokio::fs::metadata(&full_canon)
+            .await
+            .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Path not found"))?;
+
+        if meta.is_dir() {
+            if payload.recursive {
+                tokio::fs::remove_dir_all(&full_canon)
+                    .await
+                    .map_err(internal_error)?;
+                db::delete_meta_prefix(&state.pool, &rel_str)
+                    .await
+                    .map_err(internal_error)?;
+            } else {
+                if let Err(err) = tokio::fs::remove_dir(&full_canon).await {
+                    if err.kind() == io::ErrorKind::DirectoryNotEmpty {
+                        return Err(ApiError::new(
+                            StatusCode::BAD_REQUEST,
+                            "Directory not empty. Enable recursive delete.",
+                        ));
+                    }
+                    return Err(internal_error(err));
+                }
+            }
+        } else {
+            tokio::fs::remove_file(&full_canon)
+                .await
+                .map_err(internal_error)?;
+            db::delete_meta(&state.pool, &rel_str)
+                .await
+                .map_err(internal_error)?;
+        }
+    }
+
+    Ok(Json(FsResponse { success: true }))
+}
+
+async fn fs_move(
+    State(state): State<AppState>,
+    Json(payload): Json<MoveRequest>,
+) -> ApiResult<Json<FsResponse>> {
+    if payload.paths.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "No paths provided",
+        ));
+    }
+    let root_canon = get_root_canon(&state).await?;
+    let dest_rel = sanitize_relative(&payload.destination)?;
+    let dest_full = root_canon.join(&dest_rel);
+    let dest_canon = tokio::fs::canonicalize(&dest_full)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Destination not found"))?;
+
+    if !dest_canon.starts_with(&root_canon) {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid destination"));
+    }
+
+    let dest_meta = tokio::fs::metadata(&dest_canon)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Destination not found"))?;
+
+    if !dest_meta.is_dir() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Destination must be a folder",
+        ));
+    }
+
+    for path in payload.paths {
+        let rel = sanitize_relative(&path)?;
+        if rel.as_os_str().is_empty() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "Invalid path",
+            ));
+        }
+        let rel_str = rel_to_string(&rel);
+        let full_path = root_canon.join(&rel);
+        let full_canon = tokio::fs::canonicalize(&full_path)
+            .await
+            .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Path not found"))?;
+
+        if !full_canon.starts_with(&root_canon) {
+            return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid path"));
+        }
+
+        let meta = tokio::fs::metadata(&full_canon)
+            .await
+            .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Path not found"))?;
+
+        if meta.is_dir() && dest_canon.starts_with(&full_canon) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "Cannot move a folder into itself",
+            ));
+        }
+
+        let name = full_canon
+            .file_name()
+            .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "Invalid path"))?;
+        let target_rel = join_rel(&dest_rel, name);
+        let target_rel_str = rel_to_string(&target_rel);
+        let target_full = root_canon.join(&target_rel);
+
+        if tokio::fs::metadata(&target_full).await.is_ok() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "Destination already exists",
+            ));
+        }
+
+        if let Err(err) = tokio::fs::rename(&full_canon, &target_full).await {
+            if err.kind() == io::ErrorKind::CrossDeviceLink {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "Cross-device move not supported",
+                ));
+            }
+            return Err(internal_error(err));
+        }
+
+        if meta.is_dir() {
+            db::move_meta_prefix(&state.pool, &rel_str, &target_rel_str)
+                .await
+                .map_err(internal_error)?;
+        } else {
+            db::move_meta(&state.pool, &rel_str, &target_rel_str)
+                .await
+                .map_err(internal_error)?;
+        }
+    }
+
+    Ok(Json(FsResponse { success: true }))
+}
+
 fn sanitize_relative(path: &str) -> ApiResult<PathBuf> {
     let trimmed = path.trim_matches('/');
     let rel = PathBuf::from(trimmed);
@@ -659,6 +899,18 @@ fn sanitize_relative(path: &str) -> ApiResult<PathBuf> {
     }
 
     Ok(rel)
+}
+
+fn rel_to_string(rel: &Path) -> String {
+    rel.to_string_lossy().to_string()
+}
+
+fn join_rel(base: &Path, name: &OsStr) -> PathBuf {
+    if base.as_os_str().is_empty() {
+        PathBuf::from(name)
+    } else {
+        base.join(name)
+    }
 }
 
 fn is_supported_raw(path: &Path) -> bool {
