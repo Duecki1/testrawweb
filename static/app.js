@@ -47,20 +47,10 @@ function downloadUrl(path) {
   return `/api/file/download?path=${encodeURIComponent(path)}`;
 }
 
-function applyOrientation(img, orientation) {
-  const mapping = {
-    2: "scaleX(-1)",
-    3: "rotate(180deg)",
-    4: "scaleY(-1)",
-    5: "rotate(90deg) scaleX(-1)",
-    6: "rotate(90deg)",
-    7: "rotate(270deg) scaleX(-1)",
-    8: "rotate(270deg)",
-  };
-  const transform = mapping[orientation] || "";
-  img.style.transform = transform;
-  img.style.transformOrigin = "center center";
-  img.style.imageOrientation = transform ? "none" : "from-image";
+function applyOrientation(img) {
+  img.style.transform = "";
+  img.style.transformOrigin = "";
+  img.style.imageOrientation = "from-image";
 }
 
 function clearFileNav() {
@@ -311,9 +301,7 @@ function renderFileCard(file) {
       <div class="file-thumb-wrap">
         <img class="file-thumb" loading="lazy" data-preview="${encodeURIComponent(
           file.path
-        )}" data-orientation="${
-          file.orientation && file.orientation > 0 ? file.orientation : ""
-        }" alt="Preview" />
+        )}" alt="Preview" />
       </div>
       <div class="file-meta">
         <div class="file-name">${escapeHtml(file.name)}</div>
@@ -446,10 +434,7 @@ function bindExplorerHandlers() {
   document.querySelectorAll("img[data-preview]").forEach((img) => {
     const path = decodeURIComponent(img.dataset.preview || "");
     img.src = previewUrl(path, "thumb");
-    const orientation = Number(img.dataset.orientation || 0);
-    if (orientation) {
-      applyOrientation(img, orientation);
-    }
+    applyOrientation(img);
     img.addEventListener("error", () => {
       img.removeAttribute("data-preview");
       img.src = "";
@@ -700,9 +685,7 @@ function bindDetailHandlers(path, meta, prevFile, nextFile) {
 
   const previewImg = document.querySelector(".preview-img");
   if (previewImg) {
-    if (meta.orientation) {
-      applyOrientation(previewImg, meta.orientation);
-    }
+    applyOrientation(previewImg);
     previewImg.addEventListener("error", () => {
       previewImg.removeAttribute("src");
       previewImg.alt = "No preview available";

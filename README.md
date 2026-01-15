@@ -24,7 +24,7 @@ RAW_MANAGER_UID=1000
 RAW_MANAGER_GID=1000
 ```
 
-2. Ensure the library volume is mounted read-write if you want to move/delete/upload files.
+2. Ensure the host path is writable by the UID/GID you pass (or use the default 1000:1000) so folder creation, moves, and uploads work.
 3. Start the stack:
 
 ```sh

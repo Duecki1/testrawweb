@@ -5,7 +5,7 @@ use image::imageops::FilterType;
 use image::{GenericImageView, ImageFormat};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -282,13 +282,46 @@ fn parse_xmp_rating(xmp: &str) -> Option<i32> {
     None
 }
 
+fn jpeg_orientation(data: &[u8]) -> Option<i32> {
+    let mut cursor = Cursor::new(data);
+    let mut reader = BufReader::new(&mut cursor);
+    let exif = Reader::new().read_from_container(&mut reader).ok()?;
+    extract_orientation(&exif)
+}
+
+fn apply_orientation(
+    image: image::DynamicImage,
+    orientation: Option<i32>,
+) -> image::DynamicImage {
+    match orientation.unwrap_or(1) {
+        2 => image.fliph(),
+        3 => image.rotate180(),
+        4 => image.flipv(),
+        5 => image.rotate90().fliph(),
+        6 => image.rotate90(),
+        7 => image.rotate270().fliph(),
+        8 => image.rotate270(),
+        _ => image,
+    }
+}
+
 fn downscale_jpeg(data: &[u8], max_dim: u32, quality: u8) -> Result<Vec<u8>> {
+    let orientation = jpeg_orientation(data);
     let image = image::load_from_memory_with_format(data, ImageFormat::Jpeg)?;
+    let image = apply_orientation(image, orientation);
     let (width, height) = image.dimensions();
-    if width <= max_dim && height <= max_dim {
+    let needs_resize = width > max_dim || height > max_dim;
+    let needs_reencode = needs_resize || matches!(orientation, Some(value) if value != 1);
+
+    if !needs_reencode {
         return Ok(data.to_vec());
     }
-    let resized = image.resize(max_dim, max_dim, FilterType::Triangle);
+
+    let resized = if needs_resize {
+        image.resize(max_dim, max_dim, FilterType::Triangle)
+    } else {
+        image
+    };
     let mut buf = Vec::new();
     let mut encoder = JpegEncoder::new_with_quality(&mut buf, quality);
     encoder.encode_image(&resized)?;
