@@ -7,7 +7,9 @@ services:
       RAW_MANAGER_LIBRARY_ROOT: ${RAW_MANAGER_LIBRARY_ROOT:-/library}
     volumes:
       - ./data:/data
-      - ${RAW_LIBRARY_PATH}:${RAW_MANAGER_LIBRARY_ROOT}
-      - ${RAW_LIBRARY_PATH:-./photos}:${RAW_MANAGER_LIBRARY_ROOT:-/library}:ro
+      - type: bind
+        source: ${RAW_LIBRARY_PATH:-./photos}
+        target: ${RAW_MANAGER_LIBRARY_ROOT:-/library}
+        read_only: true
 
     user: "1000:1000"  # Use host user ID to avoid permission issues
