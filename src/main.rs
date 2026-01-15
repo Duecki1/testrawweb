@@ -861,7 +861,7 @@ async fn fs_move(
         }
 
         if let Err(err) = tokio::fs::rename(&full_canon, &target_full).await {
-            if err.kind() == io::ErrorKind::CrossDeviceLink {
+            if is_cross_device_link(&err) {
                 return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
                     "Cross-device move not supported",
@@ -882,6 +882,19 @@ async fn fs_move(
     }
 
     Ok(Json(FsResponse { success: true }))
+}
+
+fn is_cross_device_link(err: &io::Error) -> bool {
+    #[cfg(target_family = "unix")]
+    {
+        return err.raw_os_error() == Some(libc::EXDEV);
+    }
+
+    #[cfg(not(target_family = "unix"))]
+    {
+        let _ = err;
+        return false;
+    }
 }
 
 fn sanitize_relative(path: &str) -> ApiResult<PathBuf> {
