@@ -12,4 +12,4 @@ services:
         target: ${RAW_MANAGER_LIBRARY_ROOT:-/library}
         read_only: true
 
-    user: "1000:1000"  # Use host user ID to avoid permission issues
+    user: "${RAW_MANAGER_UID:-1000}:${RAW_MANAGER_GID:-1000}"

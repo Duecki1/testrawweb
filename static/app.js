@@ -5,6 +5,8 @@ const state = {
   selection: new Map(),
   fileNav: null,
   navHandler: null,
+  tagOptions: [],
+  dragDepth: 0,
 };
 
 const viewEl = document.getElementById("view");
@@ -35,8 +37,10 @@ function formatBytes(bytes) {
   return `${value.toFixed(1)} ${sizes[idx]}`;
 }
 
-function previewUrl(path) {
-  return `/api/file/preview?path=${encodeURIComponent(path)}`;
+function previewUrl(path, kind = "full") {
+  return `/api/file/preview?path=${encodeURIComponent(path)}&kind=${encodeURIComponent(
+    kind
+  )}`;
 }
 
 function downloadUrl(path) {
@@ -87,6 +91,23 @@ async function apiPost(url, payload) {
     throw new Error(data.error || `Request failed: ${res.status}`);
   }
   return res.json();
+}
+
+async function fetchTagOptions() {
+  try {
+    const data = await apiGet("/api/tags");
+    state.tagOptions = Array.isArray(data.tags) ? data.tags : [];
+  } catch (err) {
+    state.tagOptions = state.tagOptions || [];
+  }
+}
+
+function renderTagOptions(tags) {
+  return `
+    <datalist id="tag-options">
+      ${tags.map((tag) => `<option value="${escapeHtml(tag)}"></option>`).join("")}
+    </datalist>
+  `;
 }
 
 function navigate(url) {
@@ -246,9 +267,28 @@ function renderBreadcrumbs(path) {
   return crumbs.join(" / ");
 }
 
+function renderListRating(file) {
+  const userRating = file.user_rating;
+  const cameraRating = file.camera_rating;
+  const displayRating = userRating ?? cameraRating ?? 0;
+  const ghost = userRating == null && cameraRating != null;
+  const buttons = [];
+  for (let i = 1; i <= 5; i += 1) {
+    const active = displayRating >= i ? " active" : "";
+    const ghostClass = ghost ? " ghost" : "";
+    buttons.push(
+      `<button class="list-star${active}${ghostClass}" data-action="rate-file" data-path="${encodeURIComponent(
+        file.path
+      )}" data-rating="${i}">*</button>`
+    );
+  }
+  const title = cameraRating != null ? `Camera rating: ${cameraRating}` : "";
+  return `<div class="list-rating" title="${title}" data-user="${userRating ?? ""}" data-camera="${cameraRating ?? ""}" data-path="${encodeURIComponent(
+    file.path
+  )}">${buttons.join("")}</div>`;
+}
+
 function renderFileCard(file) {
-  const rating = file.user_rating ?? file.camera_rating;
-  const ratingLabel = file.user_rating != null ? "User" : "Cam";
   const tags = file.tags
     .map((tag) => `<span class="badge tag">${escapeHtml(tag)}</span>`)
     .join("");
@@ -262,16 +302,22 @@ function renderFileCard(file) {
     <div class="file-card${selectedClass}" data-action="open-file" data-path="${encodeURIComponent(
       file.path
     )}">
-      <button class="select-toggle${selectedClass}" data-action="toggle-select" data-kind="file" data-path="${encodeURIComponent(
-        file.path
-      )}" aria-label="Select file"></button>
-      <img class="file-thumb" data-preview="${encodeURIComponent(
-        file.path
-      )}" data-orientation="${file.orientation ?? ""}" alt="Preview" />
+      <div class="file-card-top">
+        <button class="select-toggle${selectedClass}" data-action="toggle-select" data-kind="file" data-path="${encodeURIComponent(
+          file.path
+        )}" aria-label="Select file"></button>
+        ${renderListRating(file)}
+      </div>
+      <div class="file-thumb-wrap">
+        <img class="file-thumb" loading="lazy" data-preview="${encodeURIComponent(
+          file.path
+        )}" data-orientation="${
+          file.orientation && file.orientation > 0 ? file.orientation : ""
+        }" alt="Preview" />
+      </div>
       <div class="file-meta">
         <div class="file-name">${escapeHtml(file.name)}</div>
         <div class="badge-row">
-          ${rating != null ? `<span class="badge">${ratingLabel}: ${rating}*</span>` : ""}
           ${scanBadge}
           ${tags}
         </div>
@@ -298,6 +344,23 @@ function updateSelectionUI() {
   if (moveBtn) moveBtn.disabled = count === 0;
   if (deleteBtn) deleteBtn.disabled = count === 0;
   if (clearBtn) clearBtn.disabled = count === 0;
+}
+
+function updateListRating(group, userRating) {
+  const cameraRating = parseInt(group.dataset.camera || "", 10);
+  const displayRating = Number.isNaN(userRating)
+    ? Number.isNaN(cameraRating)
+      ? 0
+      : cameraRating
+    : userRating;
+  const ghost = Number.isNaN(userRating) && !Number.isNaN(cameraRating);
+
+  group.dataset.user = Number.isNaN(userRating) ? "" : String(userRating);
+  group.querySelectorAll(".list-star").forEach((star) => {
+    const value = parseInt(star.dataset.rating || "0", 10);
+    star.classList.toggle("active", displayRating >= value);
+    star.classList.toggle("ghost", ghost);
+  });
 }
 
 function toggleSelection(path, kind, element) {
@@ -353,6 +416,24 @@ function bindExplorerHandlers() {
     });
   });
 
+  document.querySelectorAll("[data-action='rate-file']").forEach((item) => {
+    item.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const group = item.closest(".list-rating");
+      if (!group) return;
+      const path = decodeURIComponent(item.dataset.path || "");
+      const rating = parseInt(item.dataset.rating || "0", 10);
+      const current = parseInt(group.dataset.user || "", 10);
+      const newRating = current === rating ? null : rating;
+      try {
+        await apiPost("/api/file/rating", { path, rating: newRating });
+        updateListRating(group, newRating ?? NaN);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+
   document.querySelectorAll("[data-action='toggle-select']").forEach((item) => {
     item.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -364,7 +445,7 @@ function bindExplorerHandlers() {
 
   document.querySelectorAll("img[data-preview]").forEach((img) => {
     const path = decodeURIComponent(img.dataset.preview || "");
-    img.src = previewUrl(path);
+    img.src = previewUrl(path, "thumb");
     const orientation = Number(img.dataset.orientation || 0);
     if (orientation) {
       applyOrientation(img, orientation);
@@ -521,7 +602,7 @@ async function renderFileDetail(path) {
   viewEl.innerHTML = `<div class="card"><div class="loading">Loading file...</div></div>`;
   try {
     const meta = await apiGet(`/api/file/metadata?path=${encodeURIComponent(path)}`);
-    const previewSrc = previewUrl(path);
+    const previewSrc = previewUrl(path, "full");
     const mapEmbed = meta.gps_lat != null && meta.gps_lon != null;
     const folderPath = path.includes("/") ? path.split("/").slice(0, -1).join("/") : "";
     state.currentPath = folderPath;
@@ -532,6 +613,8 @@ async function renderFileDetail(path) {
     const nextFile = index >= 0 && index < fileEntries.length - 1 ? fileEntries[index + 1] : null;
     const positionLabel =
       index >= 0 ? `${index + 1} / ${fileEntries.length}` : `0 / ${fileEntries.length}`;
+
+    await fetchTagOptions();
 
     viewEl.innerHTML = `
       <section class="details-grid">
@@ -570,9 +653,10 @@ async function renderFileDetail(path) {
             <div class="meta-item">
               <div class="meta-label">Tags</div>
               <div class="tag-input">
-                <input class="input" id="tag-input" placeholder="portrait, bts, favorites" />
+                <input class="input" id="tag-input" list="tag-options" placeholder="portrait, bts, favorites" />
                 <button class="secondary-btn" id="tag-add">Add</button>
               </div>
+              ${renderTagOptions(state.tagOptions)}
             </div>
             <div class="meta-item">
               <div class="meta-label">Download</div>
@@ -669,6 +753,16 @@ function bindDetailHandlers(path, meta, prevFile, nextFile) {
 
   let tags = Array.isArray(meta.tags) ? [...meta.tags] : [];
 
+  const refreshTagOptions = async () => {
+    await fetchTagOptions();
+    const datalist = document.getElementById("tag-options");
+    if (datalist) {
+      datalist.innerHTML = state.tagOptions
+        .map((tag) => `<option value="${escapeHtml(tag)}"></option>`)
+        .join("");
+    }
+  };
+
   const renderTags = () => {
     tagList.innerHTML = tags
       .map(
@@ -707,6 +801,7 @@ function bindDetailHandlers(path, meta, prevFile, nextFile) {
       const response = await apiPost("/api/file/tags", { path, tags: nextTags });
       tags = response.tags;
       renderTags();
+      await refreshTagOptions();
     } catch (err) {
       alert(err.message);
     }
@@ -730,5 +825,94 @@ function renderStarControls(container, current, onChange) {
   }
 }
 
+function isRawFileName(name) {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  return [
+    "arw",
+    "dng",
+    "cr2",
+    "cr3",
+    "nef",
+    "raf",
+    "orf",
+    "rw2",
+    "srw",
+    "pef",
+  ].includes(ext);
+}
+
+async function uploadFiles(files) {
+  const validFiles = files.filter((file) => isRawFileName(file.name));
+  if (validFiles.length === 0) {
+    alert("No supported RAW files found.");
+    return;
+  }
+  const formData = new FormData();
+  validFiles.forEach((file) => {
+    formData.append("file", file, file.name);
+  });
+  const dest = state.currentPath || "";
+  setStatus(`Uploading ${validFiles.length} file(s)...`);
+  const response = await fetch(
+    `/api/fs/upload?path=${encodeURIComponent(dest)}`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Upload failed: ${response.status}`);
+  }
+  if (window.location.pathname === "/") {
+    await renderExplorer(state.currentPath);
+  }
+  setStatus(`Upload complete (${validFiles.length})`);
+}
+
+function setupDragAndDrop() {
+  const overlay = document.getElementById("drop-overlay");
+  if (!overlay) return;
+
+  const show = () => overlay.classList.remove("hidden");
+  const hide = () => overlay.classList.add("hidden");
+
+  window.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    state.dragDepth += 1;
+    show();
+  });
+
+  window.addEventListener("dragover", (event) => {
+    event.preventDefault();
+  });
+
+  window.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    state.dragDepth = Math.max(0, state.dragDepth - 1);
+    if (state.dragDepth === 0) {
+      hide();
+    }
+  });
+
+  window.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    state.dragDepth = 0;
+    hide();
+    if (!state.config?.configured) return;
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (!files.length) return;
+    try {
+      await uploadFiles(files);
+    } catch (err) {
+      alert(err.message);
+      setStatus("Upload failed");
+    }
+  });
+}
+
 window.addEventListener("popstate", route);
-window.addEventListener("DOMContentLoaded", init);
+window.addEventListener("DOMContentLoaded", () => {
+  init();
+  setupDragAndDrop();
+});

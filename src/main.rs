@@ -3,7 +3,7 @@ mod metadata;
 
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::{Multipart, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -20,6 +20,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tokio_util::io::ReaderStream;
 use tower_http::services::{ServeDir, ServeFile};
@@ -74,6 +75,12 @@ struct FileQuery {
     path: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PreviewQuery {
+    path: String,
+    kind: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct FileMetaResponse {
     path: String,
@@ -111,6 +118,11 @@ struct TagsResponse {
     tags: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct TagsListResponse {
+    tags: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct MkdirRequest {
     path: String,
@@ -131,6 +143,11 @@ struct MoveRequest {
 #[derive(Debug, Serialize)]
 struct FsResponse {
     success: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadQuery {
+    path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -218,9 +235,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/file/download", get(file_download))
         .route("/file/rating", post(set_rating))
         .route("/file/tags", post(set_tags))
+        .route("/tags", get(list_tags))
         .route("/fs/mkdir", post(fs_mkdir))
         .route("/fs/delete", post(fs_delete))
         .route("/fs/move", post(fs_move))
+        .route("/fs/upload", post(fs_upload))
         .route("/health", get(health));
 
     let static_service = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
@@ -446,7 +465,7 @@ async fn file_metadata(
                 gps_lat: extracted.gps_lat,
                 gps_lon: extracted.gps_lon,
                 taken_at: extracted.taken_at,
-                orientation: extracted.orientation,
+                orientation: extracted.orientation.or(Some(0)),
                 file_size: size,
                 last_modified: modified,
             };
@@ -477,7 +496,7 @@ async fn file_metadata(
                 gps_lat: extracted.gps_lat,
                 gps_lon: extracted.gps_lon,
                 taken_at: extracted.taken_at,
-                orientation: extracted.orientation,
+                orientation: extracted.orientation.or(Some(0)),
                 file_size: size,
                 last_modified: modified,
             };
@@ -519,7 +538,7 @@ async fn file_metadata(
 
 async fn file_preview(
     State(state): State<AppState>,
-    Query(query): Query<FileQuery>,
+    Query(query): Query<PreviewQuery>,
 ) -> ApiResult<Response> {
     let root_canon = get_root_canon(&state).await?;
     let rel = sanitize_relative(&query.path)?;
@@ -532,11 +551,15 @@ async fn file_preview(
         return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid path"));
     }
 
-    let preview_path = metadata::preview_cache_path(&state.preview_dir, &query.path);
+    let kind = match query.kind.as_deref() {
+        Some("thumb") => metadata::PreviewKind::Thumb,
+        _ => metadata::PreviewKind::Full,
+    };
+    let preview_path = metadata::preview_cache_path(&state.preview_dir, &query.path, kind);
     let full_canon_clone = full_canon.clone();
     let preview_path_clone = preview_path.clone();
     let generated = tokio::task::spawn_blocking(move || {
-        metadata::ensure_preview(&full_canon_clone, &preview_path_clone)
+        metadata::ensure_preview(&full_canon_clone, &preview_path_clone, kind)
     })
     .await
     .map_err(internal_error)?
@@ -687,6 +710,13 @@ async fn set_tags(
     Ok(Json(TagsResponse { tags }))
 }
 
+async fn list_tags(State(state): State<AppState>) -> ApiResult<Json<TagsListResponse>> {
+    let tags = db::list_tags(&state.pool)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(TagsListResponse { tags }))
+}
+
 async fn fs_mkdir(
     State(state): State<AppState>,
     Json(payload): Json<MkdirRequest>,
@@ -712,9 +742,9 @@ async fn fs_mkdir(
         return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid path"));
     }
 
-    tokio::fs::create_dir_all(&full_path)
-        .await
-        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "Unable to create folder"))?;
+    if let Err(err) = tokio::fs::create_dir_all(&full_path).await {
+        return Err(map_fs_error(err, "Unable to create folder"));
+    }
 
     Ok(Json(FsResponse { success: true }))
 }
@@ -755,9 +785,9 @@ async fn fs_delete(
 
         if meta.is_dir() {
             if payload.recursive {
-                tokio::fs::remove_dir_all(&full_canon)
-                    .await
-                    .map_err(internal_error)?;
+                if let Err(err) = tokio::fs::remove_dir_all(&full_canon).await {
+                    return Err(map_fs_error(err, "Unable to delete folder"));
+                }
                 db::delete_meta_prefix(&state.pool, &rel_str)
                     .await
                     .map_err(internal_error)?;
@@ -769,13 +799,13 @@ async fn fs_delete(
                             "Directory not empty. Enable recursive delete.",
                         ));
                     }
-                    return Err(internal_error(err));
+                    return Err(map_fs_error(err, "Unable to delete folder"));
                 }
             }
         } else {
-            tokio::fs::remove_file(&full_canon)
-                .await
-                .map_err(internal_error)?;
+            if let Err(err) = tokio::fs::remove_file(&full_canon).await {
+                return Err(map_fs_error(err, "Unable to delete file"));
+            }
             db::delete_meta(&state.pool, &rel_str)
                 .await
                 .map_err(internal_error)?;
@@ -867,7 +897,7 @@ async fn fs_move(
                     "Cross-device move not supported",
                 ));
             }
-            return Err(internal_error(err));
+            return Err(map_fs_error(err, "Unable to move path"));
         }
 
         if meta.is_dir() {
@@ -878,6 +908,74 @@ async fn fs_move(
             db::move_meta(&state.pool, &rel_str, &target_rel_str)
                 .await
                 .map_err(internal_error)?;
+        }
+    }
+
+    Ok(Json(FsResponse { success: true }))
+}
+
+async fn fs_upload(
+    State(state): State<AppState>,
+    Query(query): Query<UploadQuery>,
+    mut multipart: Multipart,
+) -> ApiResult<Json<FsResponse>> {
+    let root_canon = get_root_canon(&state).await?;
+    let dest_rel = sanitize_relative(query.path.as_deref().unwrap_or(""))?;
+    let dest_full = root_canon.join(&dest_rel);
+    let dest_canon = tokio::fs::canonicalize(&dest_full)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Destination not found"))?;
+
+    if !dest_canon.starts_with(&root_canon) {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "Invalid destination"));
+    }
+
+    let dest_meta = tokio::fs::metadata(&dest_canon)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "Destination not found"))?;
+    if !dest_meta.is_dir() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Destination must be a folder",
+        ));
+    }
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(internal_error)?
+    {
+        let file_name = field
+            .file_name()
+            .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "Missing file name"))?;
+        let safe_name = Path::new(file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "Invalid file name"))?;
+
+        if !is_supported_raw(Path::new(safe_name)) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "Unsupported file type",
+            ));
+        }
+
+        let target_full = dest_canon.join(safe_name);
+        if tokio::fs::metadata(&target_full).await.is_ok() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "File already exists",
+            ));
+        }
+
+        let mut file = tokio::fs::File::create(&target_full)
+            .await
+            .map_err(|err| map_fs_error(err, "Unable to create file"))?;
+        let mut field = field;
+        while let Some(chunk) = field.chunk().await.map_err(internal_error)? {
+            file.write_all(&chunk)
+                .await
+                .map_err(|err| map_fs_error(err, "Unable to write file"))?;
         }
     }
 
@@ -968,6 +1066,13 @@ fn internal_error(err: impl std::fmt::Display) -> ApiError {
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("Internal error: {err}"),
     )
+}
+
+fn map_fs_error(err: io::Error, message: &str) -> ApiError {
+    if err.kind() == io::ErrorKind::PermissionDenied {
+        return ApiError::new(StatusCode::FORBIDDEN, format!("{message}: permission denied"));
+    }
+    ApiError::new(StatusCode::BAD_REQUEST, format!("{message}: {err}"))
 }
 
 fn read_library_root_env() -> Option<String> {

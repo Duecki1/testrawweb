@@ -134,6 +134,40 @@ pub async fn upsert_tags(
     Ok(())
 }
 
+pub async fn list_tags(pool: &SqlitePool) -> Result<Vec<String>> {
+    let rows = sqlx::query("SELECT tags FROM files WHERE tags IS NOT NULL AND tags != ''")
+        .fetch_all(pool)
+        .await?;
+    let mut seen = HashSet::new();
+    let mut tags = Vec::new();
+
+    for row in rows {
+        let raw: Option<String> = row.get("tags");
+        let Some(raw) = raw else {
+            continue;
+        };
+        if raw.trim().is_empty() || raw.trim() == "[]" {
+            continue;
+        }
+        let parsed: Result<Vec<String>, _> = serde_json::from_str(&raw);
+        if let Ok(list) = parsed {
+            for tag in list {
+                let trimmed = tag.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let key = trimmed.to_lowercase();
+                if seen.insert(key) {
+                    tags.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    Ok(tags)
+}
+
 pub async fn delete_meta(pool: &SqlitePool, path: &str) -> Result<()> {
     sqlx::query("DELETE FROM files WHERE path = ?")
         .bind(path)

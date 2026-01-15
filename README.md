@@ -10,6 +10,7 @@ Raw Manager is a local-first web app for reviewing RAW files, rating, tagging, a
 - Download original files.
 - Create folders, move, and delete files.
 - Configure the library root through environment variables.
+- Drag and drop RAW files to upload.
 
 ## Run with Docker
 
@@ -19,9 +20,11 @@ Raw Manager is a local-first web app for reviewing RAW files, rating, tagging, a
 ```sh
 RAW_LIBRARY_PATH=/path/to/photos
 RAW_MANAGER_LIBRARY_ROOT=/library
+RAW_MANAGER_UID=1000
+RAW_MANAGER_GID=1000
 ```
 
-2. Ensure the library volume is mounted read-write if you want to move/delete files.
+2. Ensure the library volume is mounted read-write if you want to move/delete/upload files.
 3. Start the stack:
 
 ```sh

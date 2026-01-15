@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
 use exif::{In, Reader, Tag, Value};
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
+use image::{GenericImageView, ImageFormat};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::BufReader;
@@ -12,6 +15,12 @@ pub struct ExtractedMeta {
     pub gps_lon: Option<f64>,
     pub taken_at: Option<String>,
     pub orientation: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PreviewKind {
+    Full,
+    Thumb,
 }
 
 pub fn read_metadata(path: &Path) -> Result<ExtractedMeta> {
@@ -55,15 +64,19 @@ pub fn read_metadata(path: &Path) -> Result<ExtractedMeta> {
     })
 }
 
-pub fn preview_cache_path(preview_dir: &Path, rel_path: &str) -> PathBuf {
+pub fn preview_cache_path(preview_dir: &Path, rel_path: &str, kind: PreviewKind) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(rel_path.as_bytes());
     let hash = hasher.finalize();
-    let name = format!("{}.jpg", hex::encode(hash));
+    let suffix = match kind {
+        PreviewKind::Full => "full",
+        PreviewKind::Thumb => "thumb",
+    };
+    let name = format!("{}-{}.jpg", hex::encode(hash), suffix);
     preview_dir.join(name)
 }
 
-pub fn ensure_preview(path: &Path, preview_path: &Path) -> Result<bool> {
+pub fn ensure_preview(path: &Path, preview_path: &Path, kind: PreviewKind) -> Result<bool> {
     let source_meta = fs::metadata(path)?;
     let source_modified = source_meta.modified().ok();
 
@@ -78,14 +91,31 @@ pub fn ensure_preview(path: &Path, preview_path: &Path) -> Result<bool> {
     }
 
     let data = fs::read(path).with_context(|| format!("read {:?}", path))?;
-    if let Some((start, end)) = find_largest_jpeg(&data) {
-        if end > start {
-            fs::write(preview_path, &data[start..end])?;
+    let mut jpegs = find_jpegs(&data);
+    if jpegs.is_empty() {
+        return Ok(false);
+    }
+
+    jpegs.sort_by_key(|(start, end)| end - start);
+    let (start, end) = match kind {
+        PreviewKind::Full => *jpegs.last().unwrap(),
+        PreviewKind::Thumb => *jpegs.first().unwrap(),
+    };
+
+    if end <= start {
+        return Ok(false);
+    }
+
+    let slice = &data[start..end];
+    if matches!(kind, PreviewKind::Thumb) {
+        if let Ok(resized) = downscale_jpeg(slice, 640, 70) {
+            fs::write(preview_path, resized)?;
             return Ok(true);
         }
     }
 
-    Ok(false)
+    fs::write(preview_path, slice)?;
+    Ok(true)
 }
 
 fn extract_rating(exif: &exif::Exif) -> Option<i32> {
@@ -252,8 +282,21 @@ fn parse_xmp_rating(xmp: &str) -> Option<i32> {
     None
 }
 
-fn find_largest_jpeg(data: &[u8]) -> Option<(usize, usize)> {
-    let mut best: Option<(usize, usize)> = None;
+fn downscale_jpeg(data: &[u8], max_dim: u32, quality: u8) -> Result<Vec<u8>> {
+    let image = image::load_from_memory_with_format(data, ImageFormat::Jpeg)?;
+    let (width, height) = image.dimensions();
+    if width <= max_dim && height <= max_dim {
+        return Ok(data.to_vec());
+    }
+    let resized = image.resize(max_dim, max_dim, FilterType::Triangle);
+    let mut buf = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut buf, quality);
+    encoder.encode_image(&resized)?;
+    Ok(buf)
+}
+
+fn find_jpegs(data: &[u8]) -> Vec<(usize, usize)> {
+    let mut jpegs = Vec::new();
     let mut i = 0;
     while i + 1 < data.len() {
         if data[i] == 0xFF && data[i + 1] == 0xD8 {
@@ -262,10 +305,7 @@ fn find_largest_jpeg(data: &[u8]) -> Option<(usize, usize)> {
             while i + 1 < data.len() {
                 if data[i] == 0xFF && data[i + 1] == 0xD9 {
                     let end = i + 2;
-                    let size = end - start;
-                    if best.map(|(s, e)| e - s).unwrap_or(0) < size {
-                        best = Some((start, end));
-                    }
+                    jpegs.push((start, end));
                     i = end;
                     break;
                 }
@@ -275,5 +315,5 @@ fn find_largest_jpeg(data: &[u8]) -> Option<(usize, usize)> {
             i += 1;
         }
     }
-    best
+    jpegs
 }
