@@ -38,3 +38,4 @@ Thumbs.db
 
 # Docker volumes
 /volumes/
+frontend/node_modules/*
