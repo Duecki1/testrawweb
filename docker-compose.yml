@@ -4,11 +4,11 @@ services:
     ports:
       - "1234:1234"
     environment:
-      RAW_MANAGER_LIBRARY_ROOT: ${RAW_MANAGER_LIBRARY_ROOT}
+      RAW_MANAGER_LIBRARY_ROOT: ${RAW_MANAGER_LIBRARY_ROOT:-/library}
     volumes:
       - ./data:/data
       - type: bind
-        source: ${RAW_LIBRARY_PATH}
-        target: ${RAW_MANAGER_LIBRARY_ROOT}
+        source: ${RAW_LIBRARY_PATH:-./photos}
+        target: ${RAW_MANAGER_LIBRARY_ROOT:-/library}
 
     user: "${RAW_MANAGER_UID:-1000}:${RAW_MANAGER_GID:-1000}"
