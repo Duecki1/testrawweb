@@ -58,6 +58,7 @@ pub async fn upsert_file_meta(pool: &SqlitePool, meta: &FileMeta) -> Result<()> 
             file_size = excluded.file_size,
             last_modified = excluded.last_modified,
             orientation = excluded.orientation;
+
         "#,
     )
     .bind(&meta.path)
