@@ -1,0 +1,54 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  --bg: #000000;
+  --bg-panel: #0a0a0a;
+  --bg-hover: #1a1a1a;
+  --bg-selected: #222;
+  --ink: #eeeeee;
+  --muted: #777777;
+  --accent: #ffffff;
+  --border: #222222;
+  --thumb-height: 220px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  font-family: "Manrope", sans-serif;
+  background-color: var(--bg);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink);
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: 0.2s;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+button:hover:not(:disabled) { border-color: var(--muted); background: var(--bg-hover); }
+button:disabled { opacity: 0.3; cursor: default; }
+
+.primary-btn { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+.primary-btn:hover:not(:disabled) { background: #ddd; border-color: #ddd; }
+
+.input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--ink);
+  padding: 8px; width: 100%; font-family: inherit; font-size: 0.85rem; outline: none;
+}
+.input:focus { border-color: var(--muted); }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
