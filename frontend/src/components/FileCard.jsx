@@ -4,48 +4,41 @@ import { getRotationTransform, getMasonryStyle } from '../utils';
 import { Star, Check, ImageOff } from 'lucide-react';
 
 export function FileCard({ file, isSelected, onSelect, onNavigate }) {
-  const [status, setStatus] = useState('loading'); // loading, loaded, error
-  const [dims, setDims] = useState({ w: 300, h: 200 }); // Default 3:2
-  
+  const [status, setStatus] = useState('loading');
+  const [dims, setDims] = useState({ w: 300, h: 200 });
+  const [imgSrc, setImgSrc] = useState(() => getPreviewUrl(file.path, 'thumb'));
   const imgRef = useRef(null);
   const containerRef = useRef(null);
 
-  // 1. Calculate the Container Size (Masonry Layout)
-  // We still need this so the Grid Item takes up the correct amount of space in the row.
-  const masonry = getMasonryStyle(dims.w, dims.h, file.orientation, 220); 
+  // Calculate masonry box size
+  const masonry = getMasonryStyle(dims.w, dims.h, file.orientation, 220);
 
-  // 2. Exact same logic as DetailView
+  // Exact same math as DetailView, but using Math.max (Cover) instead of Min (Contain)
+  // to prevent tiny gaps at the edges
   const fitImage = () => {
     const img = imgRef.current;
     const con = containerRef.current;
-
     if (!img || !con) return;
 
-    // If container hasn't sized yet, abort
-    if (con.clientWidth === 0 || con.clientHeight === 0) return;
+    // Wait for layout
+    if (con.clientWidth === 0) return;
 
     const cw = con.clientWidth; 
     const ch = con.clientHeight;
     const iw = img.naturalWidth; 
     const ih = img.naturalHeight;
-    
     if (!iw || !ih) return;
 
     const o = parseInt(file.orientation || "1", 10);
     const isRotated = [5,6,7,8].includes(o);
-    
-    // The visual dimensions the image WANTS to occupy
     const targetW = isRotated ? ih : iw;
     const targetH = isRotated ? iw : ih;
-    
-    // Calculate Scale to fit exactly (Contain/Cover are the same here since container matches ratio)
-    // We use Math.max to ensure no 1px black lines appear due to rounding errors
+
+    // Use MAX to cover the box completely
     const scale = Math.max(cw / targetW, ch / targetH);
 
     img.style.width = `${iw}px`;
     img.style.height = `${ih}px`;
-    
-    // Apply Transform: Center + Scale + Rotate
     img.style.transform = `translate(-50%, -50%) scale(${scale}) ${getRotationTransform(o)}`;
     img.style.opacity = 1;
   };
@@ -54,22 +47,34 @@ export function FileCard({ file, isSelected, onSelect, onNavigate }) {
     if (e.target.naturalWidth > 0) {
       setDims({ w: e.target.naturalWidth, h: e.target.naturalHeight });
       setStatus('loaded');
-      // Trigger fit immediately after state update
+      // Fit immediately
       requestAnimationFrame(fitImage);
     }
   };
 
-  // Re-run fit on resize (responsive grid)
+  const handleError = () => {
+    // Retry with full preview before giving up
+    const thumbUrl = getPreviewUrl(file.path, 'thumb');
+    if (imgSrc === thumbUrl) {
+      setImgSrc(getPreviewUrl(file.path, 'full'));
+      return;
+    }
+    setStatus('error');
+  };
+
+  useEffect(() => {
+    setStatus('loading');
+    setDims({ w: 300, h: 200 });
+    setImgSrc(getPreviewUrl(file.path, 'thumb'));
+  }, [file.path]);
+
+  // Re-fit on resize or status change
   useEffect(() => {
     const observer = new ResizeObserver(() => fitImage());
     if (containerRef.current) observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [status]); // Re-bind when status changes (loaded)
-
-  // Double check fit when dimensions change (masonry update)
-  useEffect(() => {
     if (status === 'loaded') fitImage();
-  }, [dims, status]);
+    return () => observer.disconnect();
+  }, [status, dims]);
 
   return (
     <div 
@@ -90,26 +95,22 @@ export function FileCard({ file, isSelected, onSelect, onNavigate }) {
     >
       <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
         {status === 'error' ? (
-          <div style={{
-            position: 'absolute', inset: 0, 
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#333'
-          }}>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#333' }}>
             <ImageOff size={48} />
           </div>
         ) : (
           <img
             ref={imgRef}
-            src={getPreviewUrl(file.path, 'thumb')}
+            src={imgSrc}
             onLoad={handleLoad}
-            onError={() => setStatus('error')}
+            onError={handleError}
             alt={file.name}
             loading="lazy"
             style={{
               position: 'absolute',
               top: '50%', left: '50%',
               transformOrigin: 'center',
-              opacity: 0, // Hidden until fitImage runs
+              opacity: 0,
               transition: 'opacity 0.2s ease-in'
             }}
           />

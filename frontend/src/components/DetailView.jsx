@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { api, getPreviewUrl, getDownloadUrl, formatBytes } from '../api';
 import { getRotationTransform } from '../utils';
-import { ChevronLeft, ChevronRight, Star, Download, ArrowLeft } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, ArrowLeft } from 'lucide-react';
 
 export function DetailView({ path, onClose }) {
   const [meta, setMeta] = useState(null);
@@ -26,19 +26,14 @@ export function DetailView({ path, onClose }) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [path, siblings.prev, siblings.next]); // Added deps to prevent stale closures
+  }, [path, siblings.prev, siblings.next]);
 
-  // Handle Resize Logic
+  // Handle Resize
   useEffect(() => {
-    // This observer fires whenever the container size changes (e.g. window resize)
     const observer = new ResizeObserver(() => fitImage());
     if (containerRef.current) observer.observe(containerRef.current);
-    
-    // Also try to fit immediately in case image is cached
-    if (imgRef.current && imgRef.current.complete) fitImage();
-
     return () => observer.disconnect();
-  }, [meta]); // Re-bind when meta loads
+  }, [meta]);
 
   const loadData = async () => {
     try {
@@ -66,7 +61,6 @@ export function DetailView({ path, onClose }) {
     const img = imgRef.current;
     const con = containerRef.current;
     
-    // If container hasn't sized yet, abort
     if (con.clientWidth === 0 || con.clientHeight === 0) return;
 
     const cw = con.clientWidth; 
@@ -79,17 +73,14 @@ export function DetailView({ path, onClose }) {
     const o = parseInt(meta.orientation || "1", 10);
     const isRotated = [5,6,7,8].includes(o);
     
-    // The visual dimensions the image WANTS to occupy
     const targetW = isRotated ? ih : iw;
     const targetH = isRotated ? iw : ih;
     
-    // Contain logic
+    // Scale = MIN (Contain)
     const scale = Math.min(cw / targetW, ch / targetH);
 
     img.style.width = `${iw}px`;
     img.style.height = `${ih}px`;
-    
-    // Important: transform-origin center centers the scaling
     img.style.transform = `translate(-50%, -50%) scale(${scale}) ${getRotationTransform(o)}`;
     img.style.opacity = 1;
   };
@@ -121,17 +112,9 @@ export function DetailView({ path, onClose }) {
 
   if (!meta) return <div style={{color:'#777', padding: 40}}>Loading...</div>;
 
- return (
-  <div style={{ 
-    display: 'flex', 
-    width: '100vw',    // Viewport Width
-    height: '100vh',   // Viewport Height
-    position: 'fixed', // Force it to sit on top
-    top: 0, 
-    left: 0, 
-    zIndex: 50,
-    background: '#000' 
-  }}>
+  return (
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', position: 'fixed', top: 0, left: 0, zIndex: 50, background: '#000' }}>
+      
       {/* Image Area */}
       <div ref={containerRef} style={{ flex: 1, background: 'black', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: 16, display: 'flex', justifyContent: 'space-between', zIndex: 10, background: 'linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)' }}>
@@ -143,7 +126,9 @@ export function DetailView({ path, onClose }) {
           </div>
         </div>
         
+        {/* KEY={PATH} FIXES THE GLITCH */}
         <img 
+          key={path}
           ref={imgRef}
           src={getPreviewUrl(path, 'full')} 
           onLoad={fitImage}
@@ -151,7 +136,7 @@ export function DetailView({ path, onClose }) {
           style={{ 
             position: 'absolute', 
             top: '50%', left: '50%', 
-            opacity: 0, // Hidden until fitImage runs
+            opacity: 0, // Starts hidden, fitImage reveals it
             transition: 'opacity 0.2s', 
             transformOrigin: 'center' 
           }}
